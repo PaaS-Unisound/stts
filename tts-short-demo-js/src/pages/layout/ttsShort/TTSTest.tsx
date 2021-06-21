@@ -1,13 +1,15 @@
 import React, { useEffect, useRef, useState } from 'react';
 import style from './tts.less';
 import Speaker from './Speaker';
-import { Slider, Button, Popover, message } from 'antd';
+import { Slider, Button, Popover, message, Space, Modal } from 'antd';
 import TextArea from 'antd/lib/input/TextArea';
 import { QuestionCircleOutlined } from '@ant-design/icons';
 
 import PCMPlayer from '@/utils/PCMPlayer';
 import { sha256 } from 'js-sha256';
 import { Config, AiCode } from '@/config';
+import { useModel } from 'umi';
+import Axios from 'axios';
 interface Props {
   voiceList: Array<any>;
   maxLength: number;
@@ -20,13 +22,15 @@ export default ({ voiceList = [], maxLength = 500 }: Props) => {
   const [selected, setSelected] = useState<any>(
     voiceList.length > 0 ? voiceList[0] : null,
   );
-
-  const { appKey, secret, path } = Config[AiCode.TTSShort];
+  const { appkey, secret, path, pathLong } = useModel('useSettingsModel');
+  // const { appkey, secret, path } = Config[AiCode.TTSShort];
 
   const [speed, setSpeed] = useState<number>(50);
   const [volume, setVolume] = useState<number>(50);
   const [pitch, setPitch] = useState<number>(50);
   const [bright, setBright] = useState<number>(50);
+  const [buildStatus, setStatus] = useState<number>(0);
+  const [playing, setPlaying] = useState<boolean>(false);
   useEffect(() => {
     if (voiceList.length > 0) {
       setSelected(voiceList[0]);
@@ -39,10 +43,38 @@ export default ({ voiceList = [], maxLength = 500 }: Props) => {
   const [playText, setPlayText] = useState<string>(
     '云知声智能科技股份有限公司，成立于2012年6月29日，是语音行业发展最快的移动互联网公司。',
   );
+  function stopPlay() {
+    setPlaying(false);
+    player && player.destroy();
+    player = null;
+    ws && ws.close();
+    ws = null;
+  }
 
   function startWs() {
+    stopPlay();
+
+    let selectedText: any = window.getSelection();
+    if (selectedText.focusNode && selectedText.focusNode.id === 'textPlay') {
+      selectedText = selectedText.toString();
+    } else {
+      selectedText = '';
+    }
+    // alert(selectedText)
+    if (!selectedText) selectedText = playText;
+
+    if (selectedText.length > 500) {
+      Modal.info({
+        title: '提醒',
+        content: '试听文本长度需 <=500 个字符，可通过鼠标选中文本进行试听',
+        okText: '知道了',
+        maskClosable: true,
+      });
+      return;
+    }
+    setPlaying(true);
     const tm: number = +new Date();
-    const sign = sha256(`${appKey}${tm}${secret}`).toUpperCase();
+    const sign = sha256(`${appkey}${tm}${secret}`).toUpperCase();
 
     let context: any;
     try {
@@ -51,7 +83,7 @@ export default ({ voiceList = [], maxLength = 500 }: Props) => {
       message.error('您当前的浏览器不支持Web Audio API ');
       return;
     }
-    ws = new WebSocket(`${path}?appkey=${appKey}&time=${tm}&sign=${sign}`);
+    ws = new WebSocket(`${path}?appkey=${appkey}&time=${tm}&sign=${sign}`);
 
     ws.binaryType = 'arraybuffer';
     if (player) player.destroy();
@@ -61,6 +93,11 @@ export default ({ voiceList = [], maxLength = 500 }: Props) => {
       sampleRate: 16000,
       flushTime: 100,
     });
+    player.inputFininshed = false;
+    player.onEnded = () => {
+      stopPlay();
+      // player = null;
+    };
     let dataCount = 0;
     let startTime: Date;
     ws.onopen = () => {
@@ -68,7 +105,7 @@ export default ({ voiceList = [], maxLength = 500 }: Props) => {
         JSON.stringify({
           format: 'pcm',
           vcn: selected.code,
-          text: playText,
+          text: selectedText,
           sample: 16000,
           speed,
           volume,
@@ -84,20 +121,89 @@ export default ({ voiceList = [], maxLength = 500 }: Props) => {
       try {
         const result = JSON.parse(res.data);
         ws.close();
-        if (timer) {
-          clearTimeout(timer);
-          timer = null;
+        if (result.code !== 0) {
+          message.error('合成遇到点问题，请稍后再试~');
+          setPlaying(false);
+          player && player.destroy();
         }
       } catch (e) {
         dataCount += res.data.byteLength;
-        player.feed(res.data);
+        player && player.feed(res.data);
       }
     };
 
-    ws.onclose = () => {
-      console.log('ws.onclose ');
+    ws.onclose = e => {
+      console.log('ws.onclose ', e);
+      player && (player.inputFininshed = true);
       ws = null;
     };
+  }
+
+  function startDownLoad() {
+    const tm: number = +new Date();
+    const sign = sha256(`${appkey}${tm}${secret}`).toUpperCase();
+
+    setStatus(1);
+    Axios.post(`${pathLong}/start`, {
+      appkey: appkey,
+      time: tm,
+      sign: sign,
+      user_id: 'test_123123',
+      format: 'wav',
+      vcn: selected.code,
+      text: playText,
+      sample: 16000,
+      speed,
+      volume,
+      pitch,
+      bright,
+    })
+      .then((res: any) => {
+        let taskId = res.data.task_id;
+        if (taskId) {
+          getResult(taskId);
+          Axios.post('/manager/product/experience', {
+            aiCode: 'tts-long',
+            sid: taskId,
+          });
+        } else {
+          message.error(res.data.message);
+          setStatus(0);
+        }
+      })
+      .catch(() => {
+        setStatus(0);
+      });
+    // let timer: number
+    function getResult(taskId: string | number) {
+      Axios.post(`${pathLong}/progress`, {
+        appkey: appkey,
+        time: tm,
+        sign: sign,
+        user_id: 'test_123123',
+        task_id: taskId,
+      })
+        .then((res: any) => {
+          if (res.data.task_status !== 'done') {
+            setTimeout(() => {
+              getResult(taskId);
+            }, 1000);
+          } else {
+            // // alert(res.audio_address);
+            // if (audio.current) {
+            //   setStatus(2);
+            //   audio.current.src = res.data.audio_address;
+            //   audio.current.play();
+            // }
+            window.open(res.data.audio_address);
+            setStatus(0);
+            // setUrl(res.audio_address);
+          }
+        })
+        .catch(() => {
+          setStatus(0);
+        });
+    }
   }
 
   return (
@@ -113,10 +219,7 @@ export default ({ voiceList = [], maxLength = 500 }: Props) => {
                   if (item.playText) {
                     setPlayText(item.playText);
                   }
-                  if (player) {
-                    player.destroy();
-                    player = null;
-                  }
+                  stopPlay();
                 }}
                 {...item}
                 isSelect={item.code === (selected && selected.code)}
@@ -204,28 +307,49 @@ export default ({ voiceList = [], maxLength = 500 }: Props) => {
           </div>
         </div>
       </div>
-      <div className={style.textPlay}>
+      <div className={style.textPlay} id="textPlay">
         <TextArea
           className={style.textarea}
           value={playText}
           onChange={(e: any) => {
             setPlayText(e.target.value);
+            stopPlay();
           }}
-          bordered={false}
           maxLength={maxLength}
         />
         <div className={style.btns}>
           <div className={style.textCount}>
             {playText.length}/{maxLength}
           </div>
-          <Button
-            type="primary"
-            onClick={() => {
-              startWs();
-            }}
-          >
-            播放
-          </Button>
+          <div>
+            <Button
+              type="primary"
+              onClick={e => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (!playing) {
+                  startWs();
+                } else {
+                  stopPlay();
+                }
+              }}
+              style={{ marginRight: 20 }}
+            >
+              {playing ? '停止' : '试听'}
+            </Button>
+            <Button
+              type="primary"
+              loading={buildStatus === 1}
+              onClick={() => {
+                if (buildStatus === 0) {
+                  startDownLoad();
+                }
+              }}
+            >
+              {buildStatus === 0 && '下载'}
+              {buildStatus === 1 && '合成中'}
+            </Button>
+          </div>
         </div>
       </div>
     </div>

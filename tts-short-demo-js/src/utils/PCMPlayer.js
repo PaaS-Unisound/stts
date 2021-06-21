@@ -133,14 +133,16 @@ class PCMPlayer {
       clearInterval(this.interval);
     }
     this.samples = null;
-    this.audioCtx.close();
+    this.audioCtx && this.audioCtx.close();
     this.audioCtx = null;
+    if (this.timer) clearTimeout(this.timer);
   }
 
   flush() {
     if (!this.samples.length) return;
     var bufferSource = this.audioCtx.createBufferSource();
     const length = this.samples.length / this.option.channels;
+    console.log('flush', this.option.sampleRate);
     const audioBuffer = this.audioCtx.createBuffer(
       this.option.channels,
       length,
@@ -176,6 +178,16 @@ class PCMPlayer {
         ' duration: ' +
         audioBuffer.duration,
     );
+
+    if (this.inputFininshed) {
+      // console.log('finished', +new Date(), (this.audioCtx.currentTime - this.startTime + audioBuffer.duration) * 1000 + 500)
+      this.timer = setTimeout(() => {
+        console.log('real  finished', +new Date());
+        this.onEnded && this.onEnded();
+        // console.log('real  finished', +new Date())
+      }, (this.startTime - this.audioCtx.currentTime + audioBuffer.duration) * 1000 + 500);
+    }
+
     bufferSource.buffer = audioBuffer;
     bufferSource.connect(this.gainNode);
     bufferSource.start(this.startTime);

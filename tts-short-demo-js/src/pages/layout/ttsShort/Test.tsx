@@ -217,34 +217,10 @@ export default () => {
   });
 
   return (
-    <div
-      style={{
-        backgroundColor: '#f7f9fb',
-      }}
-      className={cstyle.bigBlock}
-      id="test"
-    >
-      <div className={cstyle.title}>产品体验</div>
+    <div className={cstyle.bigBlock}  style={{height: 560}}>
+      <div className={cstyle.title}>在线体验</div>
       <div className={style.boxContainer}>
-        <Tabs defaultActiveKey="1" centered className={cstyle.tabs}>
-          <TabPane
-            tab={
-              <span>
-                精品音库
-                <img
-                  src={require('@/assets/ttsshort/icon_quality.png')}
-                  width="24"
-                />
-              </span>
-            }
-            key="1"
-          >
-            <TTSTest voiceList={qualitySpeakers} maxLength={500} />
-          </TabPane>
-          <TabPane tab="普通音库" key="2">
-            <TTSTest voiceList={nomalSpeakers} maxLength={500} />
-          </TabPane>
-        </Tabs>
+        <TTSTest voiceList={qualitySpeakers} maxLength={50000} />
       </div>
     </div>
   );
